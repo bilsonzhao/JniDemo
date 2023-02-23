@@ -19,55 +19,93 @@
 #include "android/log.h"
 #include <linux/spi/spidev.h>
 #include <linux/gpio.h>
+#include <stdbool.h>
 
-static const char *TAG = "crypto_jni";
+static const char *TAG = "Bilson_crypto_jni";
 #define LOGI(fmt, args...) __android_log_print(ANDROID_LOG_INFO,  TAG, fmt, ##args)
 #define LOGD(fmt, args...) __android_log_print(ANDROID_LOG_DEBUG, TAG, fmt, ##args)
 #define LOGE(fmt, args...) __android_log_print(ANDROID_LOG_ERROR, TAG, fmt, ##args)
 
 #define DEV_NAME    "/dev/spidev1.0"
+bool DEBUG = false;
 static jint fd;
 static unsigned char mode = SPI_MODE_0;
 static unsigned char bits = 8;
 static unsigned char delay = 100;
-static unsigned int speed = 5000000;
+static unsigned int speed = 1000000;
+
+#define GPIO_VALUE_FILE "/sys/class/gpio/gpio130/value"
+#define ENABLE_FILE "/sys/bus/platform/devices/soc:meig_dina_demo/output3Enable"
+
+
+JNIEXPORT void set_cs_value(jstring value) {
+
+    int gpio_fd;
+    gpio_fd = open(GPIO_VALUE_FILE, O_WRONLY);
+    if (gpio_fd < 0) {
+        LOGE("Failed to open value file");
+    }
+    if (write(gpio_fd, value, 1) < 0) {
+        LOGE("Failed to set value");
+    }
+    close(gpio_fd);
+}
+
+JNIEXPORT void init_enable_gpio() {
+
+    int gpio_fd;
+    gpio_fd = open(ENABLE_FILE, O_WRONLY);
+    if (gpio_fd < 0) {
+        LOGE("Failed to open gpio33 file");
+    }
+    if (write(gpio_fd, "0", 1) < 0) {
+        LOGE("Failed to pull gpio33 down");
+    }
+    usleep(10000);
+    if (write(gpio_fd, "1", 1) < 0) {
+        LOGE("Failed to pull gpio33 up");
+    }
+    close(gpio_fd);
+}
 
 /*
  * Class:     com_cpsdna_jnidemo_CryptoNative
  * Method:    open
  * Signature: ()I
  */
-JNIEXPORT jint JNICALL Java_com_cpsdna_jnidemo_CryptoNative_open
+jint JNICALL Java_com_cpsdna_jnidemo_CryptoNative_open
         (JNIEnv *env, jobject clazz) {
+
+    //init enbale first
+    init_enable_gpio();
 
     fd = open(DEV_NAME, O_RDWR);
     if (fd < 0) {
-        perror( "can not open SPI device\n" );
+        LOGE( "can not open SPI device\n" );
     }
     int ret = ioctl(fd, SPI_IOC_WR_MODE32,&mode);
     if (ret == -1)
-        LOGD("can't set spi mode");
+        LOGE("can't set spi mode");
 
     ret = ioctl(fd, SPI_IOC_RD_MODE32,&mode);
     if (ret == -1)
-        LOGD("can't get spi mode");
+        LOGE("can't get spi mode");
 
     ret = ioctl(fd, SPI_IOC_WR_BITS_PER_WORD, &bits);
     if (ret == -1)
-        LOGD("can't set bits per word");
+        LOGE("can't set bits per word");
 
     ret = ioctl(fd, SPI_IOC_RD_BITS_PER_WORD, &bits);
     if (ret == -1)
-        LOGD("can't get bits per word");
-
+        LOGE("can't get bits per word");
 
     ret = ioctl(fd, SPI_IOC_WR_MAX_SPEED_HZ, &speed);
     if (ret == -1)
-        LOGD("can't set max speed hz");
+        LOGE("can't set max speed hz");
 
     ret = ioctl(fd, SPI_IOC_RD_MAX_SPEED_HZ, &speed);
     if (ret == -1)
-        LOGD("can't get max speed hz");
+        LOGE("can't get max speed hz");
 
     LOGD("spi mode: %d\n", mode);
     LOGD("bits per word: %d\n", bits);
@@ -76,6 +114,7 @@ JNIEXPORT jint JNICALL Java_com_cpsdna_jnidemo_CryptoNative_open
     return fd;
 }
 
+
 /*
  * Class:     com_cpsdna_jnidemo_CryptoNative
  * Method:    close
@@ -83,7 +122,7 @@ JNIEXPORT jint JNICALL Java_com_cpsdna_jnidemo_CryptoNative_open
  */
 JNIEXPORT void JNICALL Java_com_cpsdna_jnidemo_CryptoNative_close
         (JNIEnv *env, jobject clazz) {
-    LOGD("JNI spi close ... ....");
+    if(DEBUG) LOGD("JNI spi close ... ....");
     close(fd);
 }
 
@@ -95,31 +134,33 @@ JNIEXPORT void JNICALL Java_com_cpsdna_jnidemo_CryptoNative_close
 JNIEXPORT jbyteArray JNICALL Java_com_cpsdna_jnidemo_CryptoNative_read
         (JNIEnv *env, jobject clazz, jint len) {
 
-    jboolean *buf;
+    if(DEBUG) LOGD("JNI spi read ... ...");
 
+    jboolean *buf;
     jbyteArray jarray = (*env)->NewByteArray(env,len);
     jboolean *array = (*env)->GetByteArrayElements(env,jarray, NULL);
 
-    LOGD("JNI spi read ... ...");
-
     if (array == NULL)
     {
-        LOGD("JNI spi read: GetByteArrayElements faid!");
+        LOGE("JNI spi read: GetByteArrayElements fail!");
         return -1;
     }
 
-    buf = (jboolean *)calloc(sizeof(*array), sizeof(jboolean));
+    buf = (jboolean *)calloc(sizeof(*array), len);
     if (buf == NULL)
     {
-        LOGD("JNI spi read: calloc fail!");
+        LOGE("JNI spi read: calloc fail!");
         return -1;
     }
 
+    //pull cs down
+    set_cs_value("0");
     read(fd, buf, len);
+    set_cs_value("1");
 
     for (int i=0; i<len; i++)
     {
-        LOGD("JNI spi read: buf: %#x", *(buf + i));
+        if(DEBUG) LOGD("JNI spi read: buf: %#x", *(buf + i));
         *(array + i) = (jchar)(*(buf + i));
     }
 
@@ -138,34 +179,35 @@ JNIEXPORT jbyteArray JNICALL Java_com_cpsdna_jnidemo_CryptoNative_read
 JNIEXPORT jint JNICALL Java_com_cpsdna_jnidemo_CryptoNative_write
         (JNIEnv *env, jobject clazz, jbyteArray jwrite_arr, jint len) {
 
+    if(DEBUG) LOGD("JNI spi write ... ...");
+
     jbyte *array = NULL;
     jboolean *buf;
-
-    LOGD("JNI spi write ... ...");
-
     array = (*env)->GetByteArrayElements(env, jwrite_arr, NULL);
     if (array == NULL)
     {
-        LOGD("JNI spi write: GetByteArrayElements fail!");
+        LOGE("JNI spi write: GetByteArrayElements fail!");
         return -1;
     }
 
-    buf = (jboolean *)calloc(sizeof(*array), sizeof(jboolean));
+    buf = (jboolean *)calloc(sizeof(*array), len);
     if(buf == NULL)
     {
-        LOGD("JNI spi write: calloc fail!");
+        LOGE("JNI spi write: calloc fail!");
         return -1;
     }
 
     for(int i = 0; i < len; i++)
     {
         *(buf + i) = (jboolean)(*(array + i));
-        LOGD("JNI spi write: data : %#x\n",*(buf + i));
+        if(DEBUG) LOGD("JNI spi write: data : %#x\n",*(buf + i));
     }
 
     (*env)->ReleaseByteArrayElements(env, jwrite_arr, array, 0);
 
+    set_cs_value("0");
     write(fd, buf, len);
+    set_cs_value("1");
 
     free(buf);
 
@@ -186,21 +228,21 @@ JNIEXPORT jbyteArray JNICALL Java_com_cpsdna_jnidemo_CryptoNative_transfer
     array = (*env)->GetByteArrayElements(env, jtransfer_arr, NULL);
     if (array == NULL)
     {
-        LOGD("JNI spi transfer: GetByteArrayElements fail!");
+        LOGE("JNI spi transfer: GetByteArrayElements fail!");
         return -1;
     }
 
-    buf = (jboolean *)calloc(sizeof(*array), sizeof(jboolean));
+    buf = (jboolean *)calloc(sizeof(*array), len);
     if(buf == NULL)
     {
-        LOGD("JNI spi transfer: calloc fail!");
+        LOGE("JNI spi transfer: calloc fail!");
         return -1;
     }
 
     for(int i = 0; i < len; i++)
     {
         *(buf + i) = (jboolean)(*(array + i));
-        LOGD("JNI spi transfer: data : %#x\n",*(buf + i));
+        if(DEBUG) LOGD("JNI spi transfer: data : %#x\n",*(buf + i));
     }
 
     uint8_t rx[len];
@@ -229,15 +271,16 @@ JNIEXPORT jbyteArray JNICALL Java_com_cpsdna_jnidemo_CryptoNative_transfer
     }
 
     //ioctl transfer data
+    set_cs_value("0");
     ioctl(fd, SPI_IOC_MESSAGE(1), &tr);
-    int ret = ioctl(fd, SPI_IOC_MESSAGE(1), &tr);
+    set_cs_value("1");
 
     jbyteArray jrcvarray = (*env)->NewByteArray(env,len);
     jboolean *rcvarray = (*env)->GetByteArrayElements(env,jrcvarray, NULL);
 
     for(int i = 0; i < len; i++)
     {
-        LOGD("JNI transfer receiver data : %#x\n",rx[i]);
+        if(DEBUG) LOGD("JNI transfer receiver data : %#x\n",rx[i]);
         *(rcvarray + i) = (jchar)(*(rx + i));
     }
 

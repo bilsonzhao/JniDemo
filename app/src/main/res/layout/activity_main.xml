@@ -12,8 +12,37 @@
         android:layout_height="wrap_content"
         android:text="Hello World!"
         app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintHorizontal_bias="0.464"
         app:layout_constraintLeft_toLeftOf="parent"
         app:layout_constraintRight_toRightOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintVertical_bias="0.241" />
 
+    <Button
+        android:id="@+id/bt_reset"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="复位"
+        app:layout_constraintLeft_toLeftOf="@id/sample_text"
+        tools:ignore="MissingConstraints" />
+
+    <Button
+        android:id="@+id/bt_select"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="选择应用"
+        app:layout_constraintLeft_toRightOf="@id/bt_reset"
+        android:layout_marginLeft="20dp"
+        tools:ignore="MissingConstraints"
+        tools:layout_editor_absoluteY="48dp" />
+
+    <Button
+        android:id="@+id/bt_select2"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="选择应用2"
+        app:layout_constraintLeft_toRightOf="@id/bt_select"
+        android:layout_marginLeft="20dp"
+        tools:ignore="MissingConstraints"
+        tools:layout_editor_absoluteY="48dp" />
 </androidx.constraintlayout.widget.ConstraintLayout>

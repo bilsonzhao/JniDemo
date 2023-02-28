@@ -27,47 +27,82 @@ static const char *TAG = "Bilson_crypto_jni";
 #define LOGE(fmt, args...) __android_log_print(ANDROID_LOG_ERROR, TAG, fmt, ##args)
 
 #define DEV_NAME    "/dev/spidev1.0"
-bool DEBUG = false;
+#define BUF_SIZE 16
+#define PROTOCOL_HEADER 0
+#define PROTOCOL_SW1    1
+#define PROTOCOL_SW2    2
+#define PROTOCOL_LEN1   3
+#define PROTOCOL_LEN2   4
+#define AUDP_BUF_SIZE   263  //header +  info(max 261) + lrc
+#define SPI_DELAY_TX_TO_RX   100000    //us，发送数据后到接收数据的延时时间
+#define N_ACCEPT_DELAY       100       //us
+#define GPIO_RESET_DELAY     100000    //us
+
+bool DEBUG = true;
+bool DEBUG_READ = false;
+bool DEBUG_WRITE = false;
+
 static jint fd;
+static jint cs_fd;
+static jint en_fd;
+//spi config
 static unsigned char mode = SPI_MODE_0;
 static unsigned char bits = 8;
 static unsigned char delay = 100;
-static unsigned int speed = 1000000;
+static unsigned int speed = 5000000;
 
 #define GPIO_VALUE_FILE "/sys/class/gpio/gpio130/value"
 #define ENABLE_FILE "/sys/bus/platform/devices/soc:meig_dina_demo/output3Enable"
 
-
 JNIEXPORT void set_cs_value(jstring value) {
-
-    int gpio_fd;
-    gpio_fd = open(GPIO_VALUE_FILE, O_WRONLY);
-    if (gpio_fd < 0) {
-        LOGE("Failed to open value file");
+    // to wait N_Accept ok
+    usleep(N_ACCEPT_DELAY);
+    if (write(cs_fd, value, 1) < 0) {
+        LOGE("Failed to set cs value");
     }
-    if (write(gpio_fd, value, 1) < 0) {
-        LOGE("Failed to set value");
-    }
-    close(gpio_fd);
 }
 
-JNIEXPORT void init_enable_gpio() {
-
-    int gpio_fd;
-    gpio_fd = open(ENABLE_FILE, O_WRONLY);
-    if (gpio_fd < 0) {
-        LOGE("Failed to open gpio33 file");
+JNIEXPORT jstring get_cs_value() {
+    jstring value;
+    if (read(cs_fd, value, 1) < 0) {
+        //LOGE("Failed to get cs value");
     }
-    if (write(gpio_fd, "0", 1) < 0) {
+    return value;
+}
+
+JNIEXPORT jint reset_enable_gpio() {
+    if (write(en_fd, "0", 1) < 0) {
         LOGE("Failed to pull gpio33 down");
+        return -1;
     }
-    usleep(10000);
-    if (write(gpio_fd, "1", 1) < 0) {
+    usleep(GPIO_RESET_DELAY);//delay 100ms
+    if (write(en_fd, "1", 1) < 0) {
         LOGE("Failed to pull gpio33 up");
+        return -1;
     }
-    close(gpio_fd);
+    return 0;
 }
 
+JNIEXPORT jint spi_read(jint fd, jboolean* buf, jint len) {
+    set_cs_value("0");
+    int count = read(fd, buf, len);
+    set_cs_value("1");
+    return count;
+}
+
+JNIEXPORT void spi_write(jint fd, jboolean* buf, jint len) {
+    set_cs_value("0");
+    write(fd, buf, len);
+    set_cs_value("1");
+}
+
+JNIEXPORT jboolean xor(jboolean *ptr, jint n) {
+    unsigned char result = 0;
+    for (int i = 1; i < n - 1; i++) {
+        result ^= *(ptr + i);
+    }
+    return ~result;
+}
 /*
  * Class:     com_cpsdna_jnidemo_CryptoNative
  * Method:    open
@@ -77,7 +112,16 @@ jint JNICALL Java_com_cpsdna_jnidemo_CryptoNative_open
         (JNIEnv *env, jobject clazz) {
 
     //init enbale first
-    init_enable_gpio();
+    en_fd = open(ENABLE_FILE, O_WRONLY);
+    if (en_fd < 0) {
+        LOGE("Failed to open en_fd file");
+    }
+    reset_enable_gpio();
+
+    cs_fd = open(GPIO_VALUE_FILE, O_WRONLY);
+    if (cs_fd < 0) {
+        LOGE("Failed to open cs_fd file");
+    }
 
     fd = open(DEV_NAME, O_RDWR);
     if (fd < 0) {
@@ -114,7 +158,6 @@ jint JNICALL Java_com_cpsdna_jnidemo_CryptoNative_open
     return fd;
 }
 
-
 /*
  * Class:     com_cpsdna_jnidemo_CryptoNative
  * Method:    close
@@ -123,7 +166,10 @@ jint JNICALL Java_com_cpsdna_jnidemo_CryptoNative_open
 JNIEXPORT void JNICALL Java_com_cpsdna_jnidemo_CryptoNative_close
         (JNIEnv *env, jobject clazz) {
     if(DEBUG) LOGD("JNI spi close ... ....");
+    //close all fd
     close(fd);
+    close(cs_fd);
+    close(en_fd);
 }
 
 /*
@@ -134,41 +180,105 @@ JNIEXPORT void JNICALL Java_com_cpsdna_jnidemo_CryptoNative_close
 JNIEXPORT jbyteArray JNICALL Java_com_cpsdna_jnidemo_CryptoNative_read
         (JNIEnv *env, jobject clazz, jint len) {
 
-    if(DEBUG) LOGD("JNI spi read ... ...");
+    if(DEBUG_READ) LOGD("JNI spi read ... ...");
+    usleep(SPI_DELAY_TX_TO_RX);//delay 2000us to wait write ok
 
-    jboolean *buf;
-    jbyteArray jarray = (*env)->NewByteArray(env,len);
+    jbyteArray jarray = (*env)->NewByteArray(env,AUDP_BUF_SIZE);
     jboolean *array = (*env)->GetByteArrayElements(env,jarray, NULL);
-
     if (array == NULL)
     {
         LOGE("JNI spi read: GetByteArrayElements fail!");
         return -1;
     }
 
-    buf = (jboolean *)calloc(sizeof(*array), len);
-    if (buf == NULL)
-    {
-        LOGE("JNI spi read: calloc fail!");
-        return -1;
-    }
+    unsigned char header;
+    int total_read = 0;
+    int to_read = 0;
 
-    //pull cs down
+    //first pull cs down
     set_cs_value("0");
-    read(fd, buf, len);
+    read(fd, &header, 1);
+    if(DEBUG_READ)LOGD("JNI spi read Header: %#x", header);
+
+    array[PROTOCOL_HEADER] = header;
+    total_read += 1;
+    /****** S帧/R帧 **********************/
+    if (array[PROTOCOL_HEADER] == 0x33 || array[PROTOCOL_HEADER] == 0x99) {
+        to_read = 5;//4 byte data + 1 byte lrc
+        read(fd,array+total_read,to_read);
+        total_read += to_read;
+        //last pull cs up
+        set_cs_value("1");
+    } else if (array[PROTOCOL_HEADER] == 0x55) {/***** I帧 ********/
+        unsigned char sw_byte[2];
+        read(fd, &sw_byte, 2);
+        array[PROTOCOL_SW1] = sw_byte[0];
+        array[PROTOCOL_SW2] = sw_byte[1];
+        total_read +=2;
+
+        unsigned char length_bytes[2];
+        read(fd, length_bytes, 2);
+        array[PROTOCOL_LEN1] = length_bytes[0];// Len1
+        array[PROTOCOL_LEN2] = length_bytes[1];// Len2
+        total_read += 2;
+
+        int payload_length = (array[PROTOCOL_LEN1] << 8) |  array[PROTOCOL_LEN2];
+        payload_length++;  // Len1 + Len2 + lrc
+        int remaining = payload_length;// 剩余数据总长度
+
+        /****这里已经读取了5个字节，在一个cs周期内最多只能读取16个字节，接下来要判断remaining是否大于11个字节
+        1.如果remaining小于11，直接一包发完*/
+        if(remaining <= 11) {
+            to_read = remaining;
+            read(fd, array + total_read, to_read);
+            total_read += to_read;
+            //last pull cs up
+            set_cs_value("1");
+        } else {
+            /*** 2.如果remaing大于11，先发11，之后再判断剩余自己字节是否大于16 ***/
+            to_read = 11;
+            int read_count = read(fd, array + total_read, to_read);
+            remaining -= read_count;
+            total_read += to_read;
+            //last pull cs up
+            set_cs_value("1");
+
+            while (remaining > 0) {
+                to_read = remaining;
+                if (to_read > BUF_SIZE) {
+                    to_read = BUF_SIZE;
+                }
+                read_count = spi_read(fd, array + total_read, to_read);
+                remaining -= read_count;
+                total_read += read_count;
+            }
+        }
+    }// I帧 end
+
+    //ensure cs=1 when transfer complete
     set_cs_value("1");
 
-    for (int i=0; i<len; i++)
-    {
-        if(DEBUG) LOGD("JNI spi read: buf: %#x", *(buf + i));
-        *(array + i) = (jchar)(*(buf + i));
+    //only save total_read
+    jbyteArray jread_array = (*env)->NewByteArray(env,total_read);
+    jboolean *readBuf = (*env)->GetByteArrayElements(env,jread_array, NULL);
+    memcpy(readBuf, array, total_read);
+
+    //data check
+    /********校验数据是否正确 */
+    jboolean lrc = xor(readBuf,total_read);
+    if(lrc != readBuf[total_read-1]) {
+        LOGE("JNI spi read lrc: %#x",lrc);
+        LOGE("JNI spi read data check lrc failed");
     }
 
+    for (int i=0; i<total_read; i++)
+    {
+        if(DEBUG_READ) LOGD("JNI spi read: buf: %#x", *(readBuf + i));
+    }
+
+    (*env)->ReleaseByteArrayElements(env, jread_array, readBuf, 0);
     (*env)->ReleaseByteArrayElements(env, jarray, array, 0);
-
-    free(buf);
-
-    return jarray;
+    return jread_array;
 }
 
 /*
@@ -179,38 +289,29 @@ JNIEXPORT jbyteArray JNICALL Java_com_cpsdna_jnidemo_CryptoNative_read
 JNIEXPORT jint JNICALL Java_com_cpsdna_jnidemo_CryptoNative_write
         (JNIEnv *env, jobject clazz, jbyteArray jwrite_arr, jint len) {
 
-    if(DEBUG) LOGD("JNI spi write ... ...");
+    if(DEBUG_WRITE) LOGD("JNI spi write ... ...");
 
-    jbyte *array = NULL;
-    jboolean *buf;
-    array = (*env)->GetByteArrayElements(env, jwrite_arr, NULL);
+    jboolean *array = (*env)->GetByteArrayElements(env, jwrite_arr, NULL);
     if (array == NULL)
     {
         LOGE("JNI spi write: GetByteArrayElements fail!");
         return -1;
     }
 
-    buf = (jboolean *)calloc(sizeof(*array), len);
-    if(buf == NULL)
-    {
-        LOGE("JNI spi write: calloc fail!");
-        return -1;
-    }
-
     for(int i = 0; i < len; i++)
     {
-        *(buf + i) = (jboolean)(*(array + i));
-        if(DEBUG) LOGD("JNI spi write: data : %#x\n",*(buf + i));
+        if(DEBUG_WRITE) LOGD("JNI spi write: data : %#x\n",*(array + i));
     }
 
     (*env)->ReleaseByteArrayElements(env, jwrite_arr, array, 0);
 
-    set_cs_value("0");
-    write(fd, buf, len);
-    set_cs_value("1");
-
-    free(buf);
-
+    int remaining = len;
+    while (remaining > 0) {
+        int send_size = remaining > BUF_SIZE ? BUF_SIZE : remaining;
+        spi_write(fd,array,send_size);
+        array += BUF_SIZE;
+        remaining -= BUF_SIZE;
+    }
     return 0;
 }
 
@@ -218,6 +319,7 @@ JNIEXPORT jint JNICALL Java_com_cpsdna_jnidemo_CryptoNative_write
  * Class:     com_cpsdna_jnidemo_CryptoNative
  * Method:    transfer
  * Signature: ([BI)I
+ * 收发一体的函数，暂时未实现，使用read/write替代
  */
 JNIEXPORT jbyteArray JNICALL Java_com_cpsdna_jnidemo_CryptoNative_transfer
         (JNIEnv *env, jobject clazz, jbyteArray jtransfer_arr, jint len) {
@@ -290,4 +392,14 @@ JNIEXPORT jbyteArray JNICALL Java_com_cpsdna_jnidemo_CryptoNative_transfer
     free(buf);
 
     return jrcvarray;
+}
+
+/*
+ * Class:     com_cpsdna_jnidemo_CryptoNative
+ * Method:    hwReset
+ * Signature: ()I
+ */
+JNIEXPORT jint JNICALL Java_com_cpsdna_jnidemo_CryptoNative_hwReset
+        (JNIEnv *env, jobject clazz){
+    reset_enable_gpio();
 }

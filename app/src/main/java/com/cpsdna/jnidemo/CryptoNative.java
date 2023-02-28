@@ -9,6 +9,7 @@ public class CryptoNative {
     public native byte[] read(int len);
     public native int write(byte[] buf, int len);
     public native byte[] transfer(byte[] buf, int len);
+    public native int hwReset();
 
     static {
         System.loadLibrary("crypto");

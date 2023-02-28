@@ -47,6 +47,14 @@ JNIEXPORT jint JNICALL Java_com_cpsdna_jnidemo_CryptoNative_write
 JNIEXPORT jbyteArray JNICALL Java_com_cpsdna_jnidemo_CryptoNative_transfer
   (JNIEnv *, jobject, jbyteArray, jint);
 
+/*
+ * Class:     com_cpsdna_jnidemo_CryptoNative
+ * Method:    hwReset
+ * Signature: ()I
+ */
+JNIEXPORT jint JNICALL Java_com_cpsdna_jnidemo_CryptoNative_hwReset
+  (JNIEnv *, jobject);
+
 #ifdef __cplusplus
 }
 #endif
